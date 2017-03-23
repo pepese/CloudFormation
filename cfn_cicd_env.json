@@ -1,0 +1,436 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Parameters" : {
+    "SshLocation" : {
+      "Type" : "String",
+      "Default" : "xxx.xxx.xxx.xxx/32",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "MaxLength": "18",
+      "MinLength": "9",
+      "Description" : " The IP address range that can be used to SSH to the EC2 instances",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "KeyName": {
+      "Type": "String",
+      "Default": "cicd-ec2-key",
+      "AllowedPattern" : "[\\x20-\\x7E]*",
+      "MaxLength": "255",
+      "MinLength": "1",
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "ConstraintDescription" : "can contain only ASCII characters."
+    },
+    "LinuxImageId" : {
+      "Type" : "String",
+      "Default" : "ami-56d4ad31",
+      "Description" : "Amazon Linux EC2 image id",
+      "ConstraintDescription" : "must be a valid EC2 image id."
+    },
+    "LinuxInstanceType" : {
+      "Type" : "String",
+      "Default" : "m4.large",
+      "Description" : "Linux EC2 instance type",
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    }
+  },
+  "Resources" : {
+    "cicdVPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : "10.0.0.0/16",
+        "EnableDnsSupport" : "true",
+        "EnableDnsHostnames" : "true",
+        "InstanceTenancy" : "default",
+        "Tags" : [ {"Key" : "Name", "Value" : "cicd-vpc"} ]
+      }
+    },
+    "cicdInternetGateway" : {
+        "Type" : "AWS::EC2::InternetGateway",
+        "Properties" : {
+          "Tags" : [ {"Key" : "Name", "Value" : "cicd-igw"} ]
+      }
+    },
+    "AttachGateway" : {
+      "Type" : "AWS::EC2::VPCGatewayAttachment",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "InternetGatewayId" : { "Ref" : "cicdInternetGateway" }
+      }
+    },
+    "cicdSubnet0" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "CidrBlock" : "10.0.0.0/24",
+        "AvailabilityZone" : "ap-northeast-1a",
+        "MapPublicIpOnLaunch" : "true",
+        "Tags" : [ { "Key" : "Name", "Value" : "cicd-vpc-subnet0" } ]
+      }
+    },
+    "cicdRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "Tags" : [ { "Key" : "Name", "Value" : "cicd-vpc-rt" } ]
+      }
+    },
+    "internetRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "cicdRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "cicdInternetGateway" }
+      }
+    },
+    "cicdSubnet0SampleRouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "cicdSubnet0" },
+        "RouteTableId" : { "Ref" : "cicdRouteTable" }
+      }
+    },
+    "cicdNetworkAcl" : {
+      "Type" : "AWS::EC2::NetworkAcl",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "Tags" : [ { "Key" : "Name", "Value" : "cicd-vpc-acl" } ]
+      }
+    },
+    "cicdInBoundNetworkAclEntry" : {
+      "Type" : "AWS::EC2::NetworkAclEntry",
+      "Properties" : {
+        "NetworkAclId" : { "Ref" : "cicdNetworkAcl" },
+        "RuleNumber" : "100",
+        "Protocol" : "-1",
+        "RuleAction" : "allow",
+        "Egress" : "false",
+        "CidrBlock" : "0.0.0.0/0",
+        "Icmp" : { "Code" : "-1", "Type" : "-1" },
+        "PortRange" : { "From" : "0", "To" : "65535" }
+      }
+    },
+    "cicdOutBoundNetworkAclEntry" : {
+      "Type" : "AWS::EC2::NetworkAclEntry",
+      "Properties" : {
+        "NetworkAclId" : { "Ref" : "cicdNetworkAcl" },
+        "RuleNumber" : "100",
+        "Protocol" : "-1",
+        "RuleAction" : "allow",
+        "Egress" : "true",
+        "CidrBlock" : "0.0.0.0/0",
+        "Icmp" : { "Code" : "-1", "Type" : "-1" },
+        "PortRange" : { "From" : "0", "To" : "65535" }
+      }
+    },
+    "cicdSubnet0NetworkAclAssociation" : {
+      "Type" : "AWS::EC2::SubnetNetworkAclAssociation",
+        "Properties" : {
+          "SubnetId" : { "Ref" : "cicdSubnet0" },
+          "NetworkAclId" : { "Ref" : "cicdNetworkAcl" }
+      }
+    },
+    "defaultSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "GroupDescription" : "Allow all communications in VPC",
+        "SecurityGroupIngress" : [
+          { "IpProtocol" : "tcp", "FromPort" : "0", "ToPort" : "65535", "CidrIp" : "0.0.0.0/0" },
+          { "IpProtocol" : "udp", "FromPort" : "0", "ToPort" : "65535", "CidrIp" : "0.0.0.0/0" },
+          { "IpProtocol" : "icmp", "FromPort" : "-1", "ToPort" : "-1", "CidrIp" : "0.0.0.0/0" }
+        ],
+        "Tags" : [ {"Key" : "Name", "Value" : "default-sg"} ]
+      }
+    },
+    "sshSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "GroupDescription" : "Enable SSH access via port 22",
+        "SecurityGroupIngress" : [
+          { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : { "Ref" : "SshLocation" } }
+        ],
+        "Tags" : [ {"Key" : "Name", "Value" : "ssh-sg"} ]
+      }
+    },
+    "publicWebSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "cicdVPC" },
+        "GroupDescription" : "Public Security Group with HTTP access on port 443 from the internet",
+        "SecurityGroupIngress" : [
+          { "IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0" },
+          { "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "CidrIp" : "0.0.0.0/0" }
+        ],
+        "Tags" : [ {"Key" : "Name", "Value" : "public-web-sg"} ]
+      }
+    },
+    "appSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : {"Ref" : "cicdVPC"},
+        "GroupDescription" : "Marker security group for Application server.",
+        "SecurityGroupIngress" : [
+          { "IpProtocol" : "-1", "FromPort" : "0", "ToPort" : "65535", "SourceSecurityGroupId" : { "Fn::GetAtt" : [ "publicWebSecurityGroup" , "GroupId" ] } }
+        ],
+        "Tags" : [ {"Key" : "Name", "Value" : "app-sg"} ]
+      }
+    },
+    "cicdEC2Role": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path": "/",
+        "Policies": [ {
+          "PolicyName": "PowerUserPolicy",
+          "PolicyDocument": {
+            "Version" : "2012-10-17",
+            "Statement": [ {
+              "Effect": "Allow",
+              "Action": "*",
+              "Resource": "*"
+            } ]
+          }
+        } ]
+      }
+    },
+    "cicdEC2Profile" : {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "Path": "/",
+        "Roles" : [ { "Ref" : "cicdEC2Role" } ]
+      }
+    },
+    "buildInstance" : {
+      "Type" : "AWS::EC2::Instance",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+            "Install" : [ "Common", "Jenkins", "Nexus", "Web" ]
+          },
+          "Common" : {
+            "packages" : {
+              "yum" : {
+              }
+            },
+            "files" : {
+              "/etc/sysconfig/clock" : {
+                "content" : { "Fn::Join" : ["", [
+                  "ZONE=\"Asia/Tokyo\"\n",
+                  "UTC=true"
+                ]]},
+                "mode"   : "000644",
+                "owner"  : "root",
+                "group"  : "root"
+              }
+            },
+            "commands" : {
+              "01_timezone" : {
+                "command" : "ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime"
+              },
+              "02_mkfs" : {
+                "command" : "mkfs -t ext4 /dev/xvdb"
+              },
+              "03_mkdir_data" : {
+                "command" : "mkdir /data"
+              },
+              "04_mount" : {
+                "command" : "mount /dev/xvdb /data"
+              },
+              "05_fstab" : {
+                "command" : "echo \"/dev/xvdb /data ext4 defaults,nofail 0 2\" >> /etc/fstab"
+              },
+              "06_groupadd_jenkins" : {
+                "command" : "groupadd -g 1001 jenkins"
+              },
+              "07_useradd_jenkins" : {
+                "command" : "useradd -g jenkins -u 1001 jenkins"
+              },
+              "08_groupadd_nexus" : {
+                "command" : "groupadd -g 1002 nexus"
+              },
+              "09_useradd_nexus" : {
+                "command" : "useradd -g nexus -u 1002 nexus"
+              },
+              "10_groupadd_apache" : {
+                "command" : "groupadd -g 48 apache"
+              },
+              "11_useradd_apache" : {
+                "command" : "useradd -g apache -u 48 apache"
+              }
+            }
+          },
+          "Jenkins" : {
+            "packages" : {
+              "yum" : {
+                "java-1.8.0-openjdk" : []
+              }
+            },
+            "files" : {
+              "/opt/jenkins.war" : {
+                "source" : "http://mirrors.jenkins-ci.org/war-stable/latest/jenkins.war",
+                "mode"   : "000755",
+                "owner"  : "jenkins",
+                "group"  : "jenkins"
+              }
+            },
+            "commands" : {
+              "01_alternatives_java" : {
+                "command" : "alternatives --set java /usr/lib/jvm/jre-1.8.0-openjdk.x86_64/bin/java"
+              },
+              "02_mkdir_data_jenkins" : {
+                "command" : "mkdir /data/jenkins"
+              },
+              "03_chown_data_jenkins" : {
+                "command" : "chown -R jenkins:jenkins /data/jenkins"
+              },
+              "04_mkdir_var_log_jenkins" : {
+                "command" : "mkdir /var/log/jenkins"
+              },
+              "05_chown_var_log_jenkins" : {
+                "command" : "chown -R jenkins:jenkins /var/log/jenkins"
+              },
+              "06_jenkins" : {
+                "command" : "su - jenkins -c 'env JENKINS_HOME=/data/jenkins java -jar /opt/jenkins.war --httpPort=8080 --prefix=/jenkins >> /var/log/jenkins/jenkins.log 2>&1 &'"
+              }
+            }
+          },
+          "Nexus" : {
+            "sources" : {
+              "/opt/nexus" : "http://download.sonatype.com/nexus/oss/nexus-2.14.3-02-bundle.tar.gz"
+            },
+            "commands" : {
+              "01_mkdir_data_nexus" : {
+                "command" : "mkdir /data/nexus"
+              },
+              "02_mkdir_var_log_nexus" : {
+                "command" : "mkdir /var/log/nexus"
+              },
+              "03_mkdir_data_nexus_sonatype-work" : {
+                "command" : "mkdir /data/nexus/sonatype-work"
+              },
+              "04_mkdir_data_nexus_sonatype-work_nexus" : {
+                "command" : "mkdir /data/nexus/sonatype-work/nexus"
+              },
+              "05_rm_logs" : {
+                "command" : "rm -fR /opt/nexus/nexus-2.14.3-02/logs"
+              },
+              "06_ln_logs" : {
+                "command" : "ln -sfn /var/log/nexus /opt/nexus/nexus-2.14.3-02/logs"
+              },
+              "07_rm_sonatype-works" : {
+                "command" : "rm -fR /opt/nexus/sonatype-work"
+              },
+              "08_ln_sonatype_work" : {
+                "command" : "ln -sfn /data/nexus/sonatype-work /opt/nexus"
+              },
+              "09_chown_data_nexus" : {
+                "command" : "chown -R nexus:nexus /data/nexus"
+              },
+              "10_chown_opt_nexus" : {
+                "command" : "chown -R nexus:nexus /opt/nexus"
+              },
+              "11_chown_var_log_nexus" : {
+                "command" : "chown -R nexus:nexus /var/log/nexus"
+              },
+              "12_nexus" : {
+                "command" : "su - nexus -c 'env RUN_AS_USER=nexus /opt/nexus/nexus-2.14.3-02/bin/nexus start'"
+              }
+            }
+          },
+          "Web" : {
+            "packages" : {
+              "yum" : {
+                "httpd" : []
+              }
+            },
+            "files" : {
+              "/tmp/httpd_proxy_setting" : {
+                "content" : { "Fn::Join" : ["", [
+                  "\n",
+                  "<IfModule mod_proxy.c>\n",
+                  "  ProxyRequests On\n",
+                  "  ProxyPreserveHost On\n",
+                  "</IfModule>\n",
+                  "ProxyPass /jenkins http://localhost:8080/jenkins connectiontimeout=5 timeout=30\n",
+                  "ProxyPassReverse /jenkins http://localhost:8080/jenkins\n",
+                  "ProxyPass /nexus http://localhost:8081/nexus connectiontimeout=5 timeout=30\n",
+                  "ProxyPassReverse /nexus http://localhost:8081/nexus\n"
+                ]]},
+                "mode"  : "000644",
+                "owner" : "apache",
+                "group" : "apache"
+              }
+            },
+            "commands" : {
+              "01_httpd_proxy_setting" : {
+                "command" : "cat /tmp/httpd_proxy_setting >> /etc/httpd/conf/httpd.conf"
+              }
+            },
+            "services" : {
+              "sysvinit" : {
+                "httpd"   : { "enabled" : "true", "ensureRunning" : "true" }
+              }
+            }
+          }
+        }
+      },
+      "Properties" : {
+        "AvailabilityZone" : "ap-northeast-1a",
+        "IamInstanceProfile" : { "Ref" : "cicdEC2Profile" },
+        "ImageId" : { "Ref" : "LinuxImageId" },
+        "InstanceInitiatedShutdownBehavior" : "stop",
+        "InstanceType" : { "Ref" : "LinuxInstanceType" },
+        "KeyName" : { "Ref" : "KeyName" },
+        "SecurityGroupIds" : [
+          { "Fn::GetAtt" : [ "sshSecurityGroup" , "GroupId" ] },
+          { "Fn::GetAtt" : [ "publicWebSecurityGroup" , "GroupId" ] },
+          { "Fn::GetAtt" : [ "appSecurityGroup" , "GroupId" ] }
+        ],
+        "BlockDeviceMappings": [
+          { "DeviceName" : "/dev/xvdb", "Ebs" : { "VolumeSize" : "50", "VolumeType" : "standard", "DeleteOnTermination" : "true" } }
+        ],
+        "SubnetId" : { "Ref" : "cicdSubnet0" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : "cicd-ec2-buildserver" }
+        ],
+        "Tenancy" : "default",
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -xe\n",
+          "yum update -y aws-cfn-bootstrap\n",
+
+          "# Install the files and packages from the metadata\n",
+          "/opt/aws/bin/cfn-init -v ",
+          "         --stack ", { "Ref" : "AWS::StackName" },
+          "         --resource buildInstance ",
+          "         --configsets Install ",
+          "         --region ", { "Ref" : "AWS::Region" }, "\n"
+        ]]}}
+      }
+    },
+    "buildInstanceEIP" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "InstanceId" : { "Ref" : "buildInstance" }
+      }
+    }
+  },
+  "Outputs" : {
+    "Jenkins" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "buildInstance", "PublicIp" ]}, "/jenkins"]]},
+      "Description" : "URL for Jenkins"
+    },
+    "Nexus" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "buildInstance", "PublicIp" ]}, "/nexus"]]},
+      "Description" : "URL for Sonatype Nexus"
+    }
+  }
+}
