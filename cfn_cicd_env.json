@@ -81,7 +81,7 @@
         "GatewayId" : { "Ref" : "cicdInternetGateway" }
       }
     },
-    "cicdSubnet0SampleRouteTableAssociation" : {
+    "cicdSubnet0cicdRouteTableAssociation" : {
       "Type" : "AWS::EC2::SubnetRouteTableAssociation",
       "Properties" : {
         "SubnetId" : { "Ref" : "cicdSubnet0" },
