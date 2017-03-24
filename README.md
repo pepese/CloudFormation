@@ -7,6 +7,9 @@ CloudFormationテンプレート置き場
 
 - 事前に ```sample-key``` という名前でキーペアを作成しておく必要がある
 - Amazon Linuxを1台、RDS（MySQL）を1台構築する
+- ```SshLocation``` パラメータに自分のローカル環境のグローバルIPを設定してから使用する
+  - サーバにSSHする際のセキュリティグループのインバウンドに設定される
+  - 複数IPアドレスの記載には対応していない
 
 
 ## cfn_cicd_env.json
