@@ -23,6 +23,21 @@ CloudFormationテンプレート置き場
   - 複数IPアドレスの記載には対応していない
 
 
+## cfn_dev_env.json
+
+- 「cfn_cicd_env.json」とはRedmine、SESが増える点のみ異なる
+- 事前に ```dev-ec2-key``` という名前でキーペアを作成しておく必要がある
+- 事前に SESを作成しておき、 **RedmineSmtpAddress** 、 **RedmineSmtpUsername** 、 **RedmineSmtpPassword** パラメータに値を設定しておく必要がある
+  - SESはRedmineからメールを送信するために作成する
+  - SESはTokyoリージョンに無いため、オレゴンリージョン（us-west-2）へ作成する
+- Amazon Linuxを1台を構築する
+  - EIPがフェッチされる
+- Amazon LinuxにはApache HTTP Server、Jenkins、Sonatype Nexus、Redmine、SQLite（Redmine用）をインストールする
+- ```SshLocation``` パラメータに自分のローカル環境のグローバルIPを設定してから使用する
+  - サーバにSSHする際のセキュリティグループのインバウンドに設定される
+  - 複数IPアドレスの記載には対応していない
+
+
 # 設計
 
 ## ネットワーク
